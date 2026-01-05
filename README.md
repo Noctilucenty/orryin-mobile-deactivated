@@ -1,50 +1,163 @@
-# Welcome to your Expo app 👋
+# Orryin Mobile — MVP
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+[![Expo](https://img.shields.io/badge/Expo-54-000020?logo=expo&logoColor=white)](#)
+[![React Native](https://img.shields.io/badge/React%20Native-MVP-61DAFB?logo=react&logoColor=black)](#)
+[![TypeScript](https://img.shields.io/badge/TypeScript-Strict-3178C6?logo=typescript&logoColor=white)](#)
 
-## Get started
+Mobile MVP for **Orryin**, built with **Expo + React Native**, designed to validate the **user-facing flow** for onboarding, KYC initiation, and account readiness by integrating with the Orryin backend.
 
-1. Install dependencies
+> **MVP intent:** frontend-to-backend flow validation — **not production-ready UI or App Store release**.
 
-   ```bash
-   npm install
-   ```
+---
 
-2. Start the app
+## What this MVP validates
 
-   ```bash
-   npx expo start
-   ```
+- ✅ Mobile ↔ backend connectivity  
+- ✅ Session-based user state (user + account)  
+- ✅ End-to-end system test trigger (`/mvp/test-flow`)  
+- ✅ KYC initiation (`/kyc/applicant`)  
+- ✅ KYC status display readiness (`/kyc/status`)  
+- ✅ Modular, scalable navigation structure  
 
-In the output, you'll find options to open the app in a
+---
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Tech stack
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+- **Expo (v54)**
+- **React Native**
+- **Expo Router**
+- **TypeScript (strict mode)**
+- **Axios** for API calls
 
-## Get a fresh project
+---
 
-When you're ready, run:
+## Project structure
 
-```bash
-npm run reset-project
+```
+orryin-mobile/
+  app/
+    _layout.tsx
+    (tabs)/
+      _layout.tsx        # Bottom tab navigation
+      index.tsx          # Home (system test & session)
+      kyc.tsx            # KYC initiation & status
+      funding.tsx        # Placeholder (FX / funding)
+      portfolio.tsx      # Placeholder (holdings)
+  src/
+    session/
+      SessionContext.tsx # Persisted session state
+    config/
+      api.ts             # Backend base URL
+    lib/
+      api.ts             # Axios instance
+  components/
+  constants/
+  hooks/
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+---
 
-## Learn more
+## Screen overview
 
-To learn more about developing your project with Expo, look at the following resources:
+### 🏠 Home
+- Calls `/mvp/test-flow`
+- Displays backend response snapshot
+- Stores `user` and `account` in session context
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### 🧾 KYC
+- Uses real `user_id` from session
+- Calls `/kyc/applicant`
+- Designed to poll `/kyc/status` in future iterations
 
-## Join the community
+### 💳 Funding / 📊 Portfolio
+- UI shells only
+- Reserved for next-phase backend wiring
 
-Join our community of developers creating universal apps.
+---
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Session handling
+
+- Global `SessionContext`
+- Persistent storage via `AsyncStorage`
+- Hydration on app startup
+- Clear separation between backend state and UI
+
+---
+
+## Local development
+
+### 1) Install dependencies
+
+```bash
+npm install
+# or
+yarn install
+```
+
+### 2) Start Expo
+
+```bash
+npx expo start
+```
+
+Open via:
+- Web: http://localhost:8081  
+- iOS simulator / Android emulator  
+- Physical device using Expo Go  
+
+---
+
+## Backend dependency
+
+This app expects the backend to be running locally:
+
+```
+http://127.0.0.1:8000
+```
+
+Primary backend endpoints used:
+- `POST /mvp/test-flow`
+- `POST /kyc/applicant`
+- `GET  /kyc/status`
+
+---
+
+## Environment & configuration
+
+- Backend base URL is defined in `src/config/api.ts`
+- No secrets should be committed
+- `.env`, `.expo/`, and `node_modules/` must remain ignored
+
+---
+
+## Non-goals (by design)
+
+This MVP intentionally excludes:
+- Authentication (JWT / OAuth)
+- Final UI/UX polish
+- App Store configuration
+- Production security hardening
+
+These are deferred until architecture validation is complete.
+
+---
+
+## Status
+
+- ✅ Mobile MVP complete
+- 🟡 Funding & portfolio wiring pending
+- 🟡 Auth & production UX pending
+- 🟡 App Store readiness pending
+
+---
+
+## Disclaimer
+
+This mobile app is a **technical MVP** intended solely for development and validation purposes.  
+It is not production-ready and should not be distributed publicly.
+
+---
+
+## License
+
+TBD
