@@ -1,71 +1,91 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { createContext, useContext, useEffect, useState } from "react";
 
-export type FlowUser = { id: number; email: string } | null;
-export type FlowAccount = { id: number; currency: string } | null;
+export type KycState =
+  | "not_started"
+  | "pending"
+  | "approved"
+  | "already_exists"
+  | "failed";
 
-type SessionState = {
-  user: FlowUser;
-  account: FlowAccount;
-  setUser: (u: FlowUser) => void;
-  setAccount: (a: FlowAccount) => void;
-  clear: () => void;
-  hydrated: boolean;
+interface SessionState {
+  isReady: boolean;
+  user: any | null;
+  account: any | null;
+  kycState: KycState;
+  fundingWarning: string | null;
+  brokerage: any | null;
+}
+
+interface SessionContextType extends SessionState {
+  setFromBackendSnapshot: (snapshot: any) => void;
+  resetSession: () => void;
+}
+
+const initialState: SessionState = {
+  isReady: false,
+  user: null,
+  account: null,
+  kycState: "not_started",
+  fundingWarning: null,
+  brokerage: null,
 };
 
-const STORAGE_KEY = "orryin.session.v1";
-const SessionContext = createContext<SessionState | null>(null);
+const SessionContext = createContext<SessionContextType | undefined>(undefined);
 
-export function SessionProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<FlowUser>(null);
-  const [account, setAccount] = useState<FlowAccount>(null);
-  const [hydrated, setHydrated] = useState(false);
+export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
+  const [state, setState] = useState<SessionState>(initialState);
 
+  // Mark session as ready immediately (no blocking)
   useEffect(() => {
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw);
-            setUser(parsed?.user ?? null);
-            setAccount(parsed?.account ?? null);
-          } catch {
-            // corrupted storage — ignore
-          }
-        }
-      } finally {
-        setHydrated(true);
-      }
-    })();
+    setState((prev) => ({ ...prev, isReady: true }));
   }, []);
 
-  useEffect(() => {
-    if (!hydrated) return;
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ user, account })).catch(() => {});
-  }, [user, account, hydrated]);
+  const normalizeKyc = (raw: any): KycState => {
+    if (!raw) return "not_started";
+    if (raw.status === "approved") return "approved";
+    if (raw.status === "already_exists") return "already_exists";
+    if (raw.status === "created" || raw.status === "pending") return "pending";
+    return "failed";
+  };
 
-  const value = useMemo(
-    () => ({
-      user,
-      account,
-      setUser,
-      setAccount,
-      hydrated,
-      clear: () => {
-        setUser(null);
-        setAccount(null);
-        AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
-      },
-    }),
-    [user, account, hydrated]
+  const setFromBackendSnapshot = (snapshot: any) => {
+    setState({
+      isReady: true,
+      user: snapshot.user ?? null,
+      account: snapshot.account ?? null,
+      kycState: normalizeKyc(snapshot.kyc),
+      fundingWarning:
+        snapshot.payments?.warning ?? snapshot.payments?.error ?? null,
+      brokerage: snapshot.brokerage ?? null,
+    });
+  };
+
+  const resetSession = () => {
+    setState({
+      ...initialState,
+      isReady: true,
+    });
+  };
+
+  return (
+    <SessionContext.Provider
+      value={{
+        ...state,
+        setFromBackendSnapshot,
+        resetSession,
+      }}
+    >
+      {children}
+    </SessionContext.Provider>
   );
+};
 
-  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
-}
-
-export function useSession() {
+export const useSession = () => {
   const ctx = useContext(SessionContext);
-  if (!ctx) throw new Error("useSession must be used within SessionProvider");
+  if (!ctx) {
+    throw new Error("useSession must be used within SessionProvider");
+  }
   return ctx;
-}
+};

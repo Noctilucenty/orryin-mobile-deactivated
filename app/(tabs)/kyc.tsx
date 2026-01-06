@@ -1,141 +1,189 @@
 import { SafeAreaView, Text, Button, View, ScrollView } from "react-native";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { LinearGradient } from "expo-linear-gradient";
 
 import { api } from "@/src/lib/api";
-import { API_BASE_URL } from "@/src/config/api";
 import { useSession } from "@/src/session/SessionContext";
 
-function isAlreadyExistsSumsubError(e: any): boolean {
-  const httpStatus = e?.response?.status;
-
-  // If backend actually returns 409, great:
-  if (httpStatus === 409) return true;
-
-  // Otherwise, check body text for embedded Sumsub 409
-  const data = e?.response?.data;
-
-  let asText = "";
-  try {
-    asText = typeof data === "string" ? data : JSON.stringify(data ?? {});
-  } catch {
-    asText = "";
-  }
-
-  const text = asText.toLowerCase();
-
-  // Common patterns:
-  // - "Sumsub error 409"
-  // - '"code": 409'
-  // - "already exists"
-  if (text.includes("sumsub error 409")) return true;
-  if (text.includes('"code":409') || text.includes('"code": 409')) return true;
-  if (text.includes("already exists")) return true;
-
-  return false;
-}
+type KycApiResponse = {
+  applicant_id: string | null;
+  status: string;
+  review_result: any | null;
+};
 
 export default function KycScreen() {
-  const { user, hydrated } = useSession();
+  const {
+    user,
+    account,
+    kycState,
+    brokerage,
+    fundingWarning,
+    setFromBackendSnapshot,
+  } = useSession();
 
-  const [status, setStatus] = useState("Idle");
+  const [status, setStatus] = useState<string>("Idle");
+  const [error, setError] = useState<string>("");
   const [result, setResult] = useState<any>(null);
-  const [error, setError] = useState("");
+
+  const kycLabel = useMemo(() => {
+    const s = (kycState ?? "not_started").toLowerCase();
+    if (s === "not_started") return "Not started";
+    if (s === "pending") return "Pending review";
+    if (s === "created") return "Pending review";
+    if (s === "already_exists") return "Already started (idempotent)";
+    if (s === "approved") return "Approved";
+    if (s === "rejected") return "Rejected";
+    if (s === "failed") return "Error";
+    return s;
+  }, [kycState]);
+
+  const startDisabled = useMemo(() => {
+    const s = (kycState ?? "not_started").toLowerCase();
+    return s === "pending" || s === "already_exists" || s === "approved";
+  }, [kycState]);
+
+  const ensureSession = (): { ok: boolean; message?: string } => {
+    if (!user?.id) return { ok: false, message: "No user session found. Run /mvp/test-flow on Home first." };
+    if (!user?.email) return { ok: false, message: "Session user has no email. Run /mvp/test-flow on Home again." };
+    return { ok: true };
+  };
+
+  const mergeKycIntoSnapshot = (kyc: KycApiResponse) => {
+    const merged = {
+      user,
+      account,
+      kyc: {
+        applicant_id: kyc.applicant_id ?? null,
+        status: kyc.status ?? "failed",
+        review_result: kyc.review_result ?? null,
+      },
+      payments: fundingWarning ? { warning: fundingWarning } : undefined,
+      brokerage,
+    };
+    setFromBackendSnapshot(merged);
+  };
 
   const startKyc = async () => {
-    setStatus("Running...");
-    setResult(null);
     setError("");
+    setResult(null);
 
-    if (!user) {
-      setStatus("Failed ❌");
-      setError("No user in session. Go Home and run /mvp/test-flow first.");
+    const sessionCheck = ensureSession();
+    if (!sessionCheck.ok) {
+      setStatus("No session");
+      setError(sessionCheck.message || "Missing session");
+      return;
+    }
+
+    // If already started, don’t spam Sumsub.
+    if (startDisabled) {
+      setStatus("Already started");
+      setError("");
+      // Still refresh status, so UI feels responsive.
+      await refreshKycStatus();
       return;
     }
 
     try {
-      const res = await api.post("/kyc/applicant", {
-        user_id: user.id,
-        email: user.email,
-        first_name: "Test",
+      setStatus("Starting KYC...");
+
+      const payload = {
+        user_id: user!.id,
+        email: user!.email,
+        first_name: "MVP",
         last_name: "User",
-        country: "BRA",
-      });
+        country: "BR",
+      };
 
+      const res = await api.post<KycApiResponse>("/kyc/applicant", payload);
+
+      mergeKycIntoSnapshot(res.data);
       setResult(res.data);
-      setStatus("Success ✅");
+      setStatus("Success");
     } catch (e: any) {
-      // ✅ Treat applicant already exists as success-like (idempotent UX)
-      if (isAlreadyExistsSumsubError(e)) {
-        setStatus("Already created ✅");
-        setError("");
-        setResult(
-          e?.response?.data ?? {
-            message: "Applicant already exists in Sumsub. Continue verification.",
-          }
-        );
-        return;
-      }
-
-      const msg =
-        e?.response?.data
-          ? JSON.stringify(e.response.data, null, 2)
-          : e?.message || "Unknown error";
-      setError(msg);
-      setStatus("Failed ❌");
+      setStatus("Error");
+      setError("Unexpected error starting KYC");
+      setResult(e?.response?.data ?? null);
     }
   };
 
-  if (!hydrated) {
-    return (
-      <LinearGradient colors={["#0b1020", "#1a2a4a", "#6b7bd6"]} style={{ flex: 1 }}>
-        <SafeAreaView style={{ flex: 1, padding: 16 }}>
-          <Text style={{ color: "white" }}>Loading session…</Text>
-        </SafeAreaView>
-      </LinearGradient>
-    );
-  }
+  const refreshKycStatus = async () => {
+    setError("");
+    setResult(null);
 
-  const buttonTitle = status.startsWith("Already") ? "KYC Already Started" : "Start KYC";
+    const sessionCheck = ensureSession();
+    if (!sessionCheck.ok) {
+      setStatus("No session");
+      setError(sessionCheck.message || "Missing session");
+      return;
+    }
+
+    try {
+      setStatus("Refreshing KYC status...");
+
+      const res = await api.get<KycApiResponse>(
+        `/kyc/status?user_id=${encodeURIComponent(user!.id)}`
+      );
+
+      mergeKycIntoSnapshot(res.data);
+      setResult(res.data);
+      setStatus("Success");
+    } catch (e: any) {
+      setStatus("Error");
+      setError("Unexpected error fetching KYC status");
+      setResult(e?.response?.data ?? null);
+    }
+  };
+
+  // Auto-refresh when opening KYC tab (makes the app feel “live”)
+  useEffect(() => {
+    // Only run if session exists
+    if (user?.id) {
+      refreshKycStatus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   return (
-    <LinearGradient colors={["#0b1020", "#1a2a4a", "#6b7bd6"]} style={{ flex: 1 }}>
+    <LinearGradient colors={["#050A1A", "#1B2B5C"]} style={{ flex: 1 }}>
       <SafeAreaView style={{ flex: 1, padding: 16 }}>
-        <Text style={{ color: "white", fontSize: 22, fontWeight: "700", marginBottom: 8 }}>
+        <Text style={{ color: "white", fontSize: 22, fontWeight: "600" }}>
           Orryin — KYC
         </Text>
 
-        <View
-          style={{
-            marginBottom: 12,
-            backgroundColor: "rgba(255,255,255,0.08)",
-            padding: 12,
-            borderRadius: 12,
-          }}
-        >
-          <Text style={{ color: "white" }}>API: {API_BASE_URL}</Text>
-          <Text style={{ color: "white" }}>Status: {status}</Text>
-          <Text style={{ color: "white" }}>
-            Session user: {user ? `${user.id} (${user.email})` : "—"}
+        <Text style={{ color: "#9CA3AF", marginTop: 4 }}>
+          Status: {status}
+        </Text>
+
+        <View style={{ marginTop: 12 }}>
+          <Text style={{ color: "#9CA3AF" }}>
+            Session user:{" "}
+            {user?.id ? `${user.id} (${user.email ?? "no-email"})` : "None"}
           </Text>
+          <Text style={{ color: "#9CA3AF" }}>
+            Session account:{" "}
+            {account?.id ? `${account.id} (${account.currency ?? "?"})` : "None"}
+          </Text>
+
+          <Text style={{ color: "white", marginTop: 8, fontWeight: "600" }}>
+            KYC: {kycLabel}
+          </Text>
+
+          {startDisabled ? (
+            <Text style={{ color: "#9CA3AF", marginTop: 4 }}>
+              KYC is already started. Use “Refresh” to check for updates.
+            </Text>
+          ) : null}
         </View>
 
-        <Button title={buttonTitle} onPress={startKyc} />
+        <View style={{ marginTop: 16 }}>
+          <Button title="Start KYC" onPress={startKyc} disabled={startDisabled} />
+          <View style={{ height: 8 }} />
+          <Button title="Refresh KYC Status" onPress={refreshKycStatus} />
+        </View>
 
         {error ? (
-          <View
-            style={{
-              marginTop: 12,
-              padding: 10,
-              borderWidth: 1,
-              borderColor: "red",
-              borderRadius: 12,
-              backgroundColor: "rgba(255,255,255,0.06)",
-            }}
-          >
-            <Text selectable style={{ color: "#ff6b6b" }}>
-              {error}
-            </Text>
+          <View style={{ marginTop: 12 }}>
+            <Text style={{ color: "#F87171" }}>{error}</Text>
           </View>
         ) : null}
 
